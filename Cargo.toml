@@ -1,0 +1,26 @@
+[package]
+name = "tonic-openssl"
+version = "0.1.0"
+authors = ["Lucio Franco <luciofranco14@gmail.com>"]
+edition = "2018"
+license = "MIT"
+documentation = "https://docs.rs/tonic-openssl/0.1.0/tonic_openssl"
+repository = "https://github.com/LucioFranco/tonic-openssl"
+description = "A OpenSSL wrapper for tonic."
+categories = ["web-programming", "network-programming"]
+keywords = ["gRPC", "tls", "openssl"]
+readme = "README.md"
+
+[workspace]
+members = [
+    ".",
+    "example"
+]
+
+[dependencies]
+tokio = "0.2"
+tonic = "0.2"
+async-stream = "0.2"
+tokio-openssl = "0.4"
+openssl = "0.10"
+futures = { version = "0.3", default-features = false }

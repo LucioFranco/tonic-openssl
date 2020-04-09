@@ -1,0 +1,28 @@
+[package]
+name = "example"
+version = "0.1.0"
+authors = ["Lucio Franco <luciofranco14@gmail.com>"]
+edition = "2018"
+publish = false
+
+[[bin]]
+name = "client"
+path = "src/client.rs"
+
+[[bin]]
+name = "server"
+path = "src/server.rs"
+
+[dependencies]
+tonic = "0.2"
+tonic-openssl = { version = "0.1", path = ".." }
+hyper = "0.13"
+hyper-openssl = "0.8"
+prost = "0.6"
+tokio = { version = "0.2", features = ["full"] }
+openssl = "0.10"
+tower = "0.3"
+pretty_env_logger = "*"
+
+[build-dependencies]
+tonic-build = "0.2"
