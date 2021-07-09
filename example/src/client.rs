@@ -1,12 +1,12 @@
 use hello_world::greeter_client::GreeterClient;
 use hello_world::HelloRequest;
+use hyper::{client::connect::HttpConnector, Client, Uri};
+use hyper_openssl::HttpsConnector;
 use openssl::{
     ssl::{SslConnector, SslMethod},
     x509::X509,
 };
 use tonic_openssl::ALPN_H2_WIRE;
-use hyper_openssl::HttpsConnector;
-use hyper::{Client, client::connect::HttpConnector, Uri};
 
 pub mod hello_world {
     tonic::include_proto!("helloworld");
