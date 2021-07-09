@@ -13,14 +13,14 @@
 
 use async_stream::try_stream;
 use futures::{Stream, TryStream, TryStreamExt};
-use openssl::ssl::SslAcceptor;
+use openssl::ssl::{Ssl, SslAcceptor};
 use std::{
     fmt::Debug,
-    net::SocketAddr,
     pin::Pin,
+    sync::Arc,
     task::{Context, Poll},
 };
-use tokio::io::{AsyncRead, AsyncWrite};
+use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tonic::transport::{server::Connected, Certificate};
 
 /// Wrapper error type.
@@ -46,7 +46,9 @@ where
 
     try_stream! {
         while let Some(stream) = incoming.try_next().await? {
-            let tls = tokio_openssl::accept(&acceptor, stream).await?;
+            let ssl = Ssl::new(acceptor.context())?;
+            let mut tls = tokio_openssl::SslStream::new(ssl, stream)?;
+            Pin::new(&mut tls).accept().await?;
 
             let ssl = SslStream {
                 inner: tls
@@ -65,22 +67,24 @@ pub struct SslStream<S> {
 }
 
 impl<S: Connected> Connected for SslStream<S> {
-    fn remote_addr(&self) -> Option<SocketAddr> {
-        let tcp = self.inner.get_ref();
-        tcp.remote_addr()
-    }
+    type ConnectInfo = SslConnectInfo<S::ConnectInfo>;
 
-    fn peer_certs(&self) -> Option<Vec<Certificate>> {
+    fn connect_info(&self) -> Self::ConnectInfo {
+        let inner = self.inner.get_ref().connect_info();
+
         let ssl = self.inner.ssl();
-        let certs = ssl.verified_chain()?;
+        let certs = ssl
+            .verified_chain()
+            .map(|certs| {
+                certs
+                    .iter()
+                    .filter_map(|c| c.to_pem().ok())
+                    .map(Certificate::from_pem)
+                    .collect()
+            })
+            .map(Arc::new);
 
-        let certs = certs
-            .iter()
-            .filter_map(|c| c.to_pem().ok())
-            .map(Certificate::from_pem)
-            .collect();
-
-        Some(certs)
+        SslConnectInfo { inner, certs }
     }
 }
 
@@ -91,8 +95,8 @@ where
     fn poll_read(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
-        buf: &mut [u8],
-    ) -> Poll<std::io::Result<usize>> {
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<std::io::Result<()>> {
         Pin::new(&mut self.inner).poll_read(cx, buf)
     }
 }
@@ -115,5 +119,33 @@ where
 
     fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
         Pin::new(&mut self.inner).poll_shutdown(cx)
+    }
+}
+
+/// Connection info for SSL streams.
+///
+/// This type will be accessible through [request extensions](tonic::Request::extensions).
+///
+/// See [`Connected`](tonic::transport::server::Connected) for more details.
+#[derive(Debug, Clone)]
+pub struct SslConnectInfo<T> {
+    inner: T,
+    certs: Option<Arc<Vec<Certificate>>>,
+}
+
+impl<T> SslConnectInfo<T> {
+    /// Get a reference to the underlying connection info.
+    pub fn get_ref(&self) -> &T {
+        &self.inner
+    }
+
+    /// Get a mutable reference to the underlying connection info.
+    pub fn get_mut(&mut self) -> &mut T {
+        &mut self.inner
+    }
+
+    /// Return the set of connected peer SSL certificates.
+    pub fn peer_certs(&self) -> Option<Arc<Vec<Certificate>>> {
+        self.certs.clone()
     }
 }
