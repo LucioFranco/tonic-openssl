@@ -5,7 +5,9 @@ use hello_world::{HelloReply, HelloRequest};
 use openssl::ssl::{select_next_proto, AlpnError, SslAcceptor, SslFiletype, SslMethod};
 use std::net::SocketAddr;
 use tokio::net::TcpListener;
-use tonic_openssl::ALPN_H2_WIRE;
+use tokio_stream::wrappers::TcpListenerStream;
+use tonic::transport::server::TcpConnectInfo;
+use tonic_openssl::{SslConnectInfo, ALPN_H2_WIRE};
 
 pub mod hello_world {
     tonic::include_proto!("helloworld");
@@ -29,8 +31,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let addr = "[::1]:50051".parse::<SocketAddr>()?;
 
-    let mut listener = TcpListener::bind(addr).await?;
-    let incoming = tonic_openssl::incoming(listener.incoming(), acceptor);
+    let listener = TcpListener::bind(addr).await?;
+    let incoming = tonic_openssl::incoming(TcpListenerStream::new(listener), acceptor);
 
     let greeter = MyGreeter::default();
 
@@ -53,7 +55,11 @@ impl Greeter for MyGreeter {
         &self,
         request: Request<HelloRequest>,
     ) -> Result<Response<HelloReply>, Status> {
-        println!("Got a request from {:?}", request.remote_addr());
+        let remote_addr = request
+            .extensions()
+            .get::<SslConnectInfo<TcpConnectInfo>>()
+            .and_then(|info| info.get_ref().remote_addr());
+        println!("Got a request from {:?}", remote_addr);
 
         let reply = hello_world::HelloReply {
             message: format!("Hello {}!", request.into_inner().name),
