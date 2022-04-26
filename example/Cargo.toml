@@ -18,11 +18,11 @@ name = "server"
 path = "src/server.rs"
 
 [dependencies]
-tonic = "0.5"
+tonic = "0.7"
 tonic-openssl = { version = "0.1", path = ".." }
 hyper = "0.14"
 hyper-openssl = "0.9"
-prost = "0.8"
+prost = "0.10"
 tokio = { version = "1", features = ["full"] }
 tokio-stream = { version = "0.1", features = ["net"] }
 openssl = "0.10"
@@ -30,4 +30,4 @@ tower = "0.4"
 pretty_env_logger = "*"
 
 [build-dependencies]
-tonic-build = "0.5.0"
+tonic-build = "0.7"
