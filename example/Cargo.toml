@@ -19,7 +19,7 @@ path = "src/server.rs"
 
 [dependencies]
 tonic = "0.7"
-tonic-openssl = { version = "0.1", path = ".." }
+tonic-openssl = { version = "0.2", path = ".." }
 hyper = "0.14"
 hyper-openssl = "0.9"
 prost = "0.10"
