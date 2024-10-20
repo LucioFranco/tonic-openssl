@@ -21,7 +21,9 @@ use std::{
     task::{Context, Poll},
 };
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
-use tonic::transport::{server::Connected, Certificate};
+use tonic::transport::server::Connected;
+mod certificate;
+pub use certificate::Certificate;
 
 /// Wrapper error type.
 pub type Error = Box<dyn std::error::Error + Send + Sync + 'static>;
