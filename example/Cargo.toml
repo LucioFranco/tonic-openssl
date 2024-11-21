@@ -2,7 +2,7 @@
 name = "example"
 version = "0.1.0"
 authors = ["Lucio Franco <luciofranco14@gmail.com>"]
-edition = "2018"
+edition = "2021"
 publish = false
 
 [[bin]]
@@ -18,16 +18,17 @@ name = "server"
 path = "src/server.rs"
 
 [dependencies]
-tonic = "0.8"
-tonic-openssl = { version = "0.2", path = ".." }
-hyper = "0.14"
-hyper-openssl = "0.9"
-prost = "0.11"
+tonic = "0.12"
+tonic-openssl = { version = "0.3", path = ".." }
+hyper = { version = "1.0", features = ["http1", "http2"] }
+hyper-openssl = { version = "0.10", features = ["client-legacy"] }
+prost = "0.13"
 tokio = { version = "1", features = ["full"] }
 tokio-stream = { version = "0.1", features = ["net"] }
 openssl = "0.10"
-tower = "0.4"
+tower = "0.5"
 pretty_env_logger = "*"
+hyper-util = { version = "0.1.9", features = ["client-legacy", "http1", "http2"] }
 
 [build-dependencies]
-tonic-build = "0.8"
+tonic-build = "0.12"

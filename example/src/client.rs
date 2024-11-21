@@ -1,7 +1,8 @@
 use hello_world::greeter_client::GreeterClient;
 use hello_world::HelloRequest;
-use hyper::{client::connect::HttpConnector, Client, Uri};
-use hyper_openssl::HttpsConnector;
+use hyper::Uri;
+use hyper_util::{client::legacy::{connect::HttpConnector, Client}, rt::TokioExecutor};
+use hyper_openssl::client::legacy::HttpsConnector;
 use openssl::{
     ssl::{SslConnector, SslMethod},
     x509::X509,
@@ -37,7 +38,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Configure hyper's client to be h2 only and build with the
     // correct https connector.
-    let hyper = Client::builder().http2_only(true).build(https);
+    let hyper = Client::builder(TokioExecutor::new()).http2_only(true).build(https);
 
     let uri = Uri::from_static("https://[::1]:50051");
 

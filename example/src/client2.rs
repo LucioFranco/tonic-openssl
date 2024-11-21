@@ -5,11 +5,9 @@
 //! This makes it easier to store the resulting GreeterClient inside a struct.
 use hello_world::greeter_client::GreeterClient;
 use hello_world::HelloRequest;
-use hyper::{
-    client::{HttpConnector, ResponseFuture},
-    Body, Client, Request, Response, Uri,
-};
-use hyper_openssl::HttpsConnector;
+use hyper::{Request, Response, Uri};
+use hyper_util::{client::legacy::{connect::HttpConnector, Client, ResponseFuture}, rt::TokioExecutor};
+use hyper_openssl::client::legacy::HttpsConnector;
 use openssl::{
     ssl::{SslConnector, SslMethod},
     x509::X509,
@@ -55,7 +53,7 @@ impl MyChannel {
         let mut http = HttpConnector::new();
         http.enforce_http(false);
         let client = match certificate {
-            None => MyClient::ClearText(Client::builder().http2_only(true).build(http)),
+            None => MyClient::ClearText(Client::builder(TokioExecutor::new()).http2_only(true).build(http)),
             Some(pem) => {
                 let ca = X509::from_pem(&pem[..])?;
                 let mut connector = SslConnector::builder(SslMethod::tls())?;
@@ -66,7 +64,7 @@ impl MyChannel {
                     c.set_verify_hostname(false);
                     Ok(())
                 });
-                MyClient::Tls(Client::builder().http2_only(true).build(https))
+                MyClient::Tls(Client::builder(TokioExecutor::new()).http2_only(true).build(https))
             }
         };
 
@@ -77,8 +75,8 @@ impl MyChannel {
 // Check out this blog post for an introduction to Tower:
 // https://tokio.rs/blog/2021-05-14-inventing-the-service-trait
 impl Service<Request<BoxBody>> for MyChannel {
-    type Response = Response<Body>;
-    type Error = hyper::Error;
+    type Response = Response<hyper::body::Incoming>;
+    type Error = hyper_util::client::legacy::Error;
     type Future = ResponseFuture;
 
     fn poll_ready(&mut self, _: &mut std::task::Context<'_>) -> Poll<Result<(), Self::Error>> {

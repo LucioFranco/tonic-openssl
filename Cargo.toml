@@ -1,8 +1,8 @@
 [package]
 name = "tonic-openssl"
-version = "0.2.0"
+version = "0.3.0"
 authors = ["Lucio Franco <luciofranco14@gmail.com>"]
-edition = "2018"
+edition = "2021"
 license = "MIT"
 documentation = "https://docs.rs/tonic-openssl/0.2.0/tonic_openssl"
 repository = "https://github.com/LucioFranco/tonic-openssl"
@@ -19,7 +19,7 @@ members = [
 
 [dependencies]
 tokio = "1"
-tonic = "0.8"
+tonic = "0.12"
 async-stream = "0.3"
 tokio-openssl = "0.6"
 openssl = "0.10"
