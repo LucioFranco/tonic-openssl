@@ -13,7 +13,10 @@
 
 use async_stream::try_stream;
 use futures::{Stream, TryStream, TryStreamExt};
-use openssl::ssl::{Ssl, SslAcceptor};
+use openssl::{
+    ssl::{Ssl, SslAcceptor},
+    x509::X509,
+};
 use std::{
     fmt::Debug,
     pin::Pin,
@@ -22,8 +25,6 @@ use std::{
 };
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tonic::transport::server::Connected;
-mod certificate;
-pub use certificate::Certificate;
 
 /// Wrapper error type.
 pub type Error = Box<dyn std::error::Error + Send + Sync + 'static>;
@@ -74,6 +75,9 @@ impl<S: Connected> Connected for SslStream<S> {
     fn connect_info(&self) -> Self::ConnectInfo {
         let inner = self.inner.get_ref().connect_info();
 
+        // Currently openssl rust does not support clone of objects
+        // So we need to reparse the X509 certs.
+        // See: https://github.com/sfackler/rust-openssl/issues/1112
         let ssl = self.inner.ssl();
         let certs = ssl
             .verified_chain()
@@ -81,7 +85,7 @@ impl<S: Connected> Connected for SslStream<S> {
                 certs
                     .iter()
                     .filter_map(|c| c.to_pem().ok())
-                    .map(Certificate::from_pem)
+                    .filter_map(|p| X509::from_pem(&p).ok())
                     .collect()
             })
             .map(Arc::new);
@@ -132,7 +136,7 @@ where
 #[derive(Debug, Clone)]
 pub struct SslConnectInfo<T> {
     inner: T,
-    certs: Option<Arc<Vec<Certificate>>>,
+    certs: Option<Arc<Vec<X509>>>,
 }
 
 impl<T> SslConnectInfo<T> {
@@ -147,7 +151,7 @@ impl<T> SslConnectInfo<T> {
     }
 
     /// Return the set of connected peer SSL certificates.
-    pub fn peer_certs(&self) -> Option<Arc<Vec<Certificate>>> {
+    pub fn peer_certs(&self) -> Option<Arc<Vec<X509>>> {
         self.certs.clone()
     }
 }
