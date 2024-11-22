@@ -6,8 +6,11 @@
 use hello_world::greeter_client::GreeterClient;
 use hello_world::HelloRequest;
 use hyper::{Request, Response, Uri};
-use hyper_util::{client::legacy::{connect::HttpConnector, Client, ResponseFuture}, rt::TokioExecutor};
 use hyper_openssl::client::legacy::HttpsConnector;
+use hyper_util::{
+    client::legacy::{connect::HttpConnector, Client, ResponseFuture},
+    rt::TokioExecutor,
+};
 use openssl::{
     ssl::{SslConnector, SslMethod},
     x509::X509,
@@ -53,7 +56,11 @@ impl MyChannel {
         let mut http = HttpConnector::new();
         http.enforce_http(false);
         let client = match certificate {
-            None => MyClient::ClearText(Client::builder(TokioExecutor::new()).http2_only(true).build(http)),
+            None => MyClient::ClearText(
+                Client::builder(TokioExecutor::new())
+                    .http2_only(true)
+                    .build(http),
+            ),
             Some(pem) => {
                 let ca = X509::from_pem(&pem[..])?;
                 let mut connector = SslConnector::builder(SslMethod::tls())?;
@@ -64,7 +71,11 @@ impl MyChannel {
                     c.set_verify_hostname(false);
                     Ok(())
                 });
-                MyClient::Tls(Client::builder(TokioExecutor::new()).http2_only(true).build(https))
+                MyClient::Tls(
+                    Client::builder(TokioExecutor::new())
+                        .http2_only(true)
+                        .build(https),
+                )
             }
         };
 
