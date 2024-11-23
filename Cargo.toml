@@ -24,3 +24,6 @@ async-stream = "0.3"
 tokio-openssl = "0.6"
 openssl = "0.10"
 futures = { version = "0.3", default-features = false }
+tower = "0.5"
+hyper = "1.5"
+hyper-util = "0.1"
