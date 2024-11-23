@@ -11,6 +11,9 @@
     unreachable_pub
 )]
 
+mod client;
+pub use client::{connector, new_endpoint};
+
 use async_stream::try_stream;
 use futures::{Stream, TryStream, TryStreamExt};
 use openssl::{

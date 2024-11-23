@@ -29,6 +29,11 @@ openssl = "0.10"
 tower = "0.5"
 pretty_env_logger = "*"
 hyper-util = { version = "0.1.9", features = ["client-legacy", "http1", "http2"] }
+tokio-util = "0.7"
 
 [build-dependencies]
 tonic-build = "0.12"
+
+# For protobuf rs code
+[package.metadata.rust-analyzer]
+cargo.loadOutDirsFromCheck = true
