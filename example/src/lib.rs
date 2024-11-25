@@ -28,22 +28,20 @@ impl crate::greeter_server::Greeter for MyGreeter {
 
 #[cfg(test)]
 mod tests {
-    use std::{
-        net::SocketAddr,
-        path::{Path, PathBuf},
-        time::Duration,
-    };
+    use std::{error::Error, net::SocketAddr, time::Duration};
 
-    use openssl::ssl::{
-        SslAcceptor, SslAcceptorBuilder, SslConnector, SslConnectorBuilder, SslFiletype, SslMethod,
-        SslVerifyMode,
+    use openssl::{
+        ssl::{
+            SslAcceptor, SslAcceptorBuilder, SslConnector, SslConnectorBuilder, SslMethod,
+            SslVerifyMode,
+        },
+        x509::X509,
     };
     use tokio::net::TcpListener;
     use tokio_stream::wrappers::TcpListenerStream;
     use tokio_util::sync::CancellationToken;
     use tonic::transport::Channel;
 
-    const CERT_DIR: &str = "./tls";
     const TEST_SUBJECT_NAME: &str = "localhost";
 
     /// Helper function to set connector with alpn protocol and tls version.
@@ -61,22 +59,19 @@ mod tests {
         });
     }
     // get openssl connector with client cert set.
-    pub fn get_test_openssl_connector<P: AsRef<Path>>(
-        ca_path: P,
-        cert_path: P,
-        key_path: P,
+    pub fn get_test_openssl_connector(
+        cert: &X509,
+        key: &openssl::pkey::PKey<openssl::pkey::Private>,
     ) -> SslConnector {
         let mut connector = SslConnector::builder(SslMethod::tls()).unwrap();
-        connector.set_ca_file(ca_path.as_ref()).unwrap();
-        connector
-            .set_certificate_file(cert_path.as_ref(), SslFiletype::PEM)
-            .unwrap();
-        connector
-            .set_private_key_file(key_path.as_ref(), SslFiletype::PEM)
-            .unwrap();
+        connector.cert_store_mut().add_cert(cert.clone()).unwrap();
+        connector.add_client_ca(cert).unwrap();
+        connector.set_certificate(cert).unwrap();
+        connector.set_private_key(key).unwrap();
+        connector.check_private_key().unwrap();
         connector.set_verify_callback(
             SslVerifyMode::PEER,
-            get_unsafe_verify_callback(TEST_SUBJECT_NAME.to_string()),
+            get_sn_verify_callback(TEST_SUBJECT_NAME.to_string()),
         );
         openssl_configure_connector(&mut connector).unwrap();
         connector.build()
@@ -84,11 +79,10 @@ mod tests {
 
     pub async fn connect_test_tonic_channel(
         addr: SocketAddr,
-        ca: &Path,
-        cert: &Path,
-        key: &Path,
+        cert: &X509,
+        key: &openssl::pkey::PKey<openssl::pkey::Private>,
     ) -> Result<Channel, tonic::transport::Error> {
-        let connector = get_test_openssl_connector(ca, cert, key);
+        let connector = get_test_openssl_connector(cert, key);
         tonic_openssl::new_endpoint()
             .connect_with_connector(tonic_openssl::connector(
                 format!("https://{}", addr).parse().unwrap(),
@@ -103,24 +97,21 @@ mod tests {
     async fn run_tonic_server(
         token: CancellationToken,
         listener: TcpListener,
-        ca: &Path,
-        cert: &Path,
-        key: &Path,
+        cert: &X509,
+        key: &openssl::pkey::PKey<openssl::pkey::Private>,
     ) {
         let greeter = crate::MyGreeter {};
         // build openssl acceptor
         let mut acceptor = SslAcceptor::mozilla_intermediate(SslMethod::tls()).unwrap();
-        acceptor
-            .set_private_key_file(key, SslFiletype::PEM)
-            .unwrap();
-        acceptor.set_certificate_chain_file(cert).unwrap();
-        acceptor.set_ca_file(ca).unwrap();
+        acceptor.set_private_key(key).unwrap();
+        acceptor.set_certificate(cert).unwrap();
+        acceptor.cert_store_mut().add_cert(cert.clone()).unwrap();
         acceptor.check_private_key().unwrap();
         openssl_configure_acceptor(&mut acceptor);
         // require client to present cert with matching subject name.
         acceptor.set_verify_callback(
             SslVerifyMode::PEER | SslVerifyMode::FAIL_IF_NO_PEER_CERT,
-            get_unsafe_verify_callback(TEST_SUBJECT_NAME.to_string()),
+            get_sn_verify_callback(TEST_SUBJECT_NAME.to_string()),
         );
 
         let acceptor = acceptor.build();
@@ -142,25 +133,20 @@ mod tests {
         (listener, local_addr)
     }
 
-    /// TODO: currently the cert in this repo gives this error: unsupported certificate purpose
-    /// so we blindly accept all certs for now.
-    fn get_unsafe_verify_callback(
-        _subject_name: String,
-    ) -> impl Fn(bool, &mut openssl::x509::X509StoreContextRef) -> bool {
-        move |preverify_ok: bool, ctx: &mut openssl::x509::X509StoreContextRef| {
-            if !preverify_ok {
-                // cert has problem
-                let e = ctx.error();
-                println!("verify failed : {}", e);
-            }
-            true
-        }
+    fn make_test_cert(
+        subject_alt_names: Vec<String>,
+    ) -> (X509, openssl::pkey::PKey<openssl::pkey::Private>) {
+        use rcgen::{generate_simple_self_signed, CertifiedKey};
+        let CertifiedKey { cert, key_pair } =
+            generate_simple_self_signed(subject_alt_names).unwrap();
+        let cert = X509::from_pem(cert.pem().as_bytes()).unwrap();
+        let key =
+            openssl::pkey::PKey::private_key_from_pem(key_pair.serialize_pem().as_bytes()).unwrap();
+        (cert, key)
     }
 
     /// returns the verify callback that checks the subject name matches in the SN field or Alt field.
     /// This is only an example of how to do validation with self signed certs.
-    /// TODO: use this one.
-    #[allow(dead_code)]
     fn get_sn_verify_callback(
         subject_name: String,
     ) -> impl Fn(bool, &mut openssl::x509::X509StoreContextRef) -> bool {
@@ -210,13 +196,10 @@ mod tests {
 
     #[tokio::test]
     async fn basic() {
-        let test_ca = PathBuf::from(CERT_DIR).join("ca.pem");
-        let test_cert = PathBuf::from(CERT_DIR).join("server.pem");
-        let test_key = PathBuf::from(CERT_DIR).join("server.key");
+        let (cert, key) = make_test_cert(vec![TEST_SUBJECT_NAME.to_string()]);
+        let (cert2, key2) = make_test_cert(vec!["localhost2".to_string()]);
 
-        let test_ca_cp = test_ca.clone();
-        let test_cert_cp = test_cert.clone();
-        let test_key_cp = test_key.clone();
+        let (cert_cp, key_cp) = (cert.clone(), key.clone());
 
         // get a random port on localhost from os
         let (listener, addr) = create_listener_server().await;
@@ -225,7 +208,7 @@ mod tests {
         let sv_token_cp = sv_token.clone();
         // start server in background
         let sv_h = tokio::spawn(async move {
-            run_tonic_server(sv_token_cp, listener, &test_ca, &test_cert, &test_key).await
+            run_tonic_server(sv_token_cp, listener, &cert_cp, &key_cp).await
         });
 
         println!("running server on {addr}");
@@ -233,26 +216,23 @@ mod tests {
         // wait a bit for server to boot up.
         tokio::time::sleep(Duration::from_secs(1)).await;
 
-        // TODO: enable this once the failure check is upstreamed.
         // send a request with a wrong cert and verify it fails
-        // {
-        //     let e = connect_test_tonic_channel(addr, &test_ca, &test_cert, &test_key)
-        //         .await
-        //         .expect_err("unexpected success");
-        //     // there is a double wrappring of the error of ssl Error
-        //     let src = e.source().unwrap().source().unwrap();
-        //     let ssl_e = src.downcast_ref::<openssl::ssl::Error>().unwrap();
-        //     // Check generic ssl error. The detail of the error should be server cert untrusted, which is unimportant,
-        //     // since the test case here only aims to cause an ssl failure between client and server.
-        //     assert_eq!(ssl_e.code(), openssl::ssl::ErrorCode::SSL);
-        //     let inner_e = ssl_e.ssl_error().unwrap().errors();
-        //     assert_eq!(inner_e.len(), 1);
-        // }
+        {
+            let e = connect_test_tonic_channel(addr, &cert2, &key2)
+                .await
+                .expect_err("unexpected success");
+            // there is a double wrappring of the error of ssl Error
+            let src = e.source().unwrap().source().unwrap();
+            let ssl_e = src.downcast_ref::<openssl::ssl::Error>().unwrap();
+            // Check generic ssl error. The detail of the error should be server cert untrusted, which is unimportant,
+            // since the test case here only aims to cause an ssl failure between client and server.
+            assert_eq!(ssl_e.code(), openssl::ssl::ErrorCode::SSL);
+            let inner_e = ssl_e.ssl_error().unwrap().errors();
+            assert_eq!(inner_e.len(), 1);
+        }
 
         // get client and send request
-        let ch = connect_test_tonic_channel(addr, &test_ca_cp, &test_cert_cp, &test_key_cp)
-            .await
-            .unwrap();
+        let ch = connect_test_tonic_channel(addr, &cert, &key).await.unwrap();
         let mut client = crate::greeter_client::GreeterClient::new(ch);
         let request = tonic::Request::new(crate::HelloRequest {
             name: "Tonic".into(),

@@ -15,13 +15,15 @@ mod client;
 pub use client::{connector, new_endpoint};
 
 use async_stream::try_stream;
-use futures::{Stream, TryStream, TryStreamExt};
+use futures::{Stream, TryStreamExt};
 use openssl::{
     ssl::{Ssl, SslAcceptor},
     x509::X509,
 };
 use std::{
     fmt::Debug,
+    io,
+    ops::ControlFlow,
     pin::Pin,
     sync::Arc,
     task::{Context, Poll},
@@ -39,30 +41,129 @@ pub const ALPN_H2_WIRE: &[u8] = b"\x02h2";
 /// Wrap some incoming stream of io types with OpenSSL's
 /// `SslStream` type. This will take some acceptor and a
 /// stream of io types and accept connections.
-pub fn incoming<S>(
-    incoming: S,
+pub fn incoming<IO, IE>(
+    incoming: impl Stream<Item = Result<IO, IE>>,
     acceptor: SslAcceptor,
-) -> impl Stream<Item = Result<SslStream<S::Ok>, Error>>
+) -> impl Stream<Item = Result<SslStream<IO>, Error>>
 where
-    S: TryStream + Unpin,
-    S::Ok: AsyncRead + AsyncWrite + Send + Sync + Debug + Unpin + 'static,
-    S::Error: Into<crate::Error>,
+    IO: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+    IE: Into<crate::Error>,
 {
-    let mut incoming = incoming;
-
     try_stream! {
-        while let Some(stream) = incoming.try_next().await? {
-            let ssl = Ssl::new(acceptor.context())?;
-            let mut tls = tokio_openssl::SslStream::new(ssl, stream)?;
-            Pin::new(&mut tls).accept().await?;
+        let mut incoming = std::pin::pin!(incoming);
+        let mut tasks = tokio::task::JoinSet::new();
+        loop {
+            // Process the next tcp accept or the next handshake complete.
+            match select(&mut incoming, &mut tasks).await {
+                SelectOutput::Incoming(stream) => {
+                    // Next tcp stream accepted, push to the task set to do handshake in the background.
+                    // tls and ssl construct calls do not expect to fail.
+                    let ssl = Ssl::new(acceptor.context())?;
+                    let mut tls = tokio_openssl::SslStream::new(ssl, stream)?;
+                    tasks.spawn(async move {
+                        Pin::new(&mut tls).accept().await?;
+                        let ssl = SslStream {
+                            inner: tls
+                        };
+                        Ok(ssl)
+                    });
+                }
 
-            let ssl = SslStream {
-                inner: tls
-            };
+                SelectOutput::Io(io) => {
+                    // Next ssl stream ready from task set.
+                    yield io;
+                }
 
-            yield ssl;
+                // tcp accept or client handshake has error.
+                // Terminate the server if cannot handle the error.
+                SelectOutput::Err(e) => match handle_accept_error(e) {
+                    ControlFlow::Continue(_) => continue,
+                    ControlFlow::Break(e) => Err(e)?,
+                }
+
+                // No more tcp accept stream
+                SelectOutput::Done => {
+                    break;
+                }
+            }
         }
     }
+}
+
+/// Select when incoming tcp stream is accepted or the next ssl stream is ready.
+async fn select<IO: 'static, IE>(
+    incoming: &mut (impl Stream<Item = Result<IO, IE>> + Unpin),
+    tasks: &mut tokio::task::JoinSet<Result<SslStream<IO>, crate::Error>>,
+) -> SelectOutput<IO>
+where
+    IE: Into<crate::Error>,
+{
+    if tasks.is_empty() {
+        return match incoming.try_next().await {
+            Ok(Some(stream)) => SelectOutput::Incoming(stream),
+            Ok(None) => SelectOutput::Done,
+            Err(e) => SelectOutput::Err(e.into()),
+        };
+    }
+
+    tokio::select! {
+        stream = incoming.try_next() => {
+            match stream {
+                Ok(Some(stream)) => SelectOutput::Incoming(stream),
+                Ok(None) => SelectOutput::Done,
+                Err(e) => SelectOutput::Err(e.into()),
+            }
+        }
+
+        accept = tasks.join_next() => {
+            match accept.expect("JoinSet should never end") {
+                Ok(Ok(io)) => SelectOutput::Io(io),
+                Ok(Err(e)) => SelectOutput::Err(e),
+                Err(e) => SelectOutput::Err(e.into()),
+            }
+        }
+    }
+}
+
+enum SelectOutput<A> {
+    Incoming(A),      // new tcp stream
+    Io(SslStream<A>), // new ssl stream
+    Err(crate::Error),
+    Done,
+}
+
+/// When server handles accept error or client connection ssl error,
+/// this function determines if server should continue to run.
+/// The logic is similar to rustls tonic:
+/// https://github.com/hyperium/tonic/blob/e9a8c3c366a9080cca99e9b9aa09ed85c0a90a5e/tonic/src/transport/server/incoming.rs#L90
+fn handle_accept_error(e: impl Into<crate::Error>) -> ControlFlow<crate::Error> {
+    let e = e.into();
+
+    if let Some(e) = e.downcast_ref::<openssl::ssl::Error>() {
+        let e_io = e.io_error();
+        if e_io.is_none() {
+            // this is ssl error. ssl error on a single client should not abort server.
+            return ControlFlow::Continue(());
+        }
+        // list of io error that should not affect server handling next request.
+        // openssl might read from socket and get these errors.
+        // TODO: the list is copied from tonic rustls, openssl might have a smaller list.
+        let e_io = e_io.unwrap();
+        if matches!(
+            e_io.kind(),
+            io::ErrorKind::ConnectionAborted
+                | io::ErrorKind::ConnectionReset
+                | io::ErrorKind::BrokenPipe
+                | io::ErrorKind::Interrupted
+                | io::ErrorKind::InvalidData // Raised if TLS handshake failed
+                | io::ErrorKind::UnexpectedEof // Raised if TLS handshake failed
+                | io::ErrorKind::WouldBlock
+                | io::ErrorKind::TimedOut
+        ) {
+            return ControlFlow::Continue(());
+        }
+    }
+    ControlFlow::Break(e)
 }
 
 /// A `SslStream` wrapper type that implements tokio's io traits
