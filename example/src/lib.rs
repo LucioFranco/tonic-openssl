@@ -66,8 +66,6 @@ mod tests {
         let mut connector = SslConnector::builder(SslMethod::tls()).unwrap();
         connector.cert_store_mut().add_cert(cert.clone()).unwrap();
         connector.add_client_ca(cert).unwrap();
-        //connector.set_client_ca_list(list);
-        //connector.set_ca_file(file)
         connector.set_certificate(cert).unwrap();
         connector.set_private_key(key).unwrap();
         connector.check_private_key().unwrap();
@@ -149,8 +147,6 @@ mod tests {
 
     /// returns the verify callback that checks the subject name matches in the SN field or Alt field.
     /// This is only an example of how to do validation with self signed certs.
-    /// TODO: use this one.
-    #[allow(dead_code)]
     fn get_sn_verify_callback(
         subject_name: String,
     ) -> impl Fn(bool, &mut openssl::x509::X509StoreContextRef) -> bool {
