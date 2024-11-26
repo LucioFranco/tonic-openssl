@@ -3,7 +3,7 @@
 //! Examples can be found in the `example` crate
 //! within the repository.
 
-#![doc(html_root_url = "https://docs.rs/tonic-openssl/0.2.0")]
+#![doc(html_root_url = "https://docs.rs/tonic-openssl/0.3.0")]
 #![warn(
     missing_debug_implementations,
     missing_docs,
