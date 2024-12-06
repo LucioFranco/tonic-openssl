@@ -1,3 +1,5 @@
+**tonic-openssl is superceded by [tonic-tls](https://github.com/youyuanwu/tonic-tls) which has richer features.**
+
 # tonic-openssl
 
 A wrapper crate for OpenSSL and `tonic`.
